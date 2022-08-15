@@ -1,0 +1,71 @@
+name: aorta-release
+on: 
+  workflow_dispatch:
+    inputs: 
+      release-version:
+        required: true
+      app-version:
+        required: true
+      endpoint-version:
+        required: true
+      
+jobs:
+  get-release:
+    runs-on: ubuntu-latest
+    outputs:
+      releases: ${{ steps.list-object.outputs.releases }}
+    steps:
+      - name: Install AWS CLI
+        run: |
+          if aws --version; then
+            echo "aws cli installed"
+          else
+            echo "aws cli not installed"
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install
+          fi
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+      - name: List Release Objects
+        id: list-object
+        run: |
+            app_releases=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-app-installer/aorta-app-installer-${{github.event.inputs.app-version}} | jq -cer '[.Contents[].Key]' | tr '"' '\"')
+            echo "APP Releases: $app_releases"
+            endpoint_releases=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-endpoint-installer/aorta-endpoint-${{github.event.inputs.endpoint-version}} | jq -cer '[.Contents[].Key]' | tr '"' '\"')
+            echo "Endpoint Releases: $endpoint_releases"
+            releases=$(jq -cer --argjson arr1 "$app_releases" --argjson arr2 "$endpoint_releases" -n '$arr1 + $arr2')
+            echo "::set-output name=releases::$releases"
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs: get-release
+    strategy:
+      matrix:
+        release: ${{fromJSON(needs.get-release.outputs.releases)}}
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+      - name: Download Release Binary
+        id: download-release-binary
+        run: |
+          binary_name=$(cut -d '/' -f3 <<< ${{matrix.release}})
+          echo "⬇️ Downloading ${{matrix.release}}"
+          aws s3api get-object --bucket aorta-chelpis --key ${{matrix.release}} $binary_name
+          echo "::set-output name=binary_name::$binary_name"
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{github.event.inputs.release-version}}
+          files: ${{steps.download-release-binary.outputs.binary_name}}
+          append_body: true
