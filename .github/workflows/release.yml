@@ -36,7 +36,7 @@ jobs:
         run: |
             app_releases=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-app-installer/aorta-app-installer-${{github.event.inputs.app-version}} | jq -cer '[.Contents[].Key]' | tr '"' '\"')
             echo "APP Releases: $app_releases"
-            endpoint_releases=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-endpoint-installer/aorta-endpoint-${{github.event.inputs.endpoint-version}} | jq -cer '[.Contents[].Key]' | tr '"' '\"')
+            endpoint_releases=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-endpoint-installer/aorta-endpoint-v${{github.event.inputs.endpoint-version}} | jq -cer '[.Contents[].Key]' | tr '"' '\"')
             echo "Endpoint Releases: $endpoint_releases"
             releases=$(jq -cer --argjson arr1 "$app_releases" --argjson arr2 "$endpoint_releases" -n '$arr1 + $arr2')
             echo "::set-output name=releases::$releases"
