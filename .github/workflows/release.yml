@@ -34,7 +34,7 @@ jobs:
       - name: List Release Objects
         id: list-object
         run: |
-            app_releases=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-app-installer/aorta-app-installer-${{github.event.inputs.app-version}} | jq -cer '[.Contents[].Key]' | tr '"' '\"')
+            app_releases=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-app-installer/aorta-app-installer-${{github.event.inputs.app-version}} | jq -cer '[.Contents[].Key | select(contains("-dev-") | not)]' | tr '"' '\"')
             echo "APP Releases: $app_releases"
             endpoint_releases=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-endpoint-installer/aorta-endpoint-v${{github.event.inputs.endpoint-version}} | jq -cer '[.Contents[].Key]' | tr '"' '\"')
             echo "Endpoint Releases: $endpoint_releases"
