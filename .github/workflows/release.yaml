@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release Version
+        required: true
+      app-version:
+        description: PQTunnel App Version
+        required: true
+      endpoint-version:
+        description: PQTunnel Endpoint Version
+        required: true
+
+env:
+  CI: 1
+
+jobs:
+  populate-matrix:
+    name: Populate matrix
+    runs-on:
+      - ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      matrix: ${{ steps.populate-matrix.outputs.matrix }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-1
+
+      - name: List artifacts
+        id: list-artifacts
+        run: |
+          app_artifacts=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-app-installer/pq-tunnel-installer-${{github.event.inputs.app-version}} | jq -c)
+          echo "app-artifacts=${app_artifacts}" >> "$GITHUB_OUTPUT"
+          endpoint_artifacts=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-endpoint-installer/pqtunnel-endpoint-v${{github.event.inputs.endpoint-version}} | jq -c)
+          echo "endpoint-artifacts=${endpoint_artifacts}" >> "$GITHUB_OUTPUT"
+
+      - name: Populate matrix
+        id: populate-matrix
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const APP_NAME = "pqtunnel-app";
+            const APP_KEY_REGEX = /^build\/aorta-app-installer\/pq-tunnel-installer-(.*)$/;
+            const ENDPOINT_NAME = "pqtunnel-endpoint";
+            const ENDPOINT_KEY_REGEX =
+              /^build\/aorta-endpoint-installer\/pqtunnel-endpoint-v(.*)$/;
+            const appArtifacts = ${{ steps.list-artifacts.outputs.app-artifacts }};
+            const endpointArtifacts = ${{ steps.list-artifacts.outputs.endpoint-artifacts }};
+            const processArtifact = (artifacts, prefix, regex) =>
+              artifacts.Contents.flatMap(({ Key }) => {
+                const match = regex.exec(Key);
+                if (match && match[1] && !match[1].includes("-dev-") && !match[1].includes("-alpha-") && !match[1].includes("-beta-")) {
+                  return [
+                    {
+                      name: `${prefix}-${match[1]}`,
+                      key: Key,
+                    },
+                  ];
+                }
+                return [];
+              });
+            core.setOutput("matrix", {
+              include: processArtifact(appArtifacts, APP_NAME, APP_KEY_REGEX).concat(
+                processArtifact(endpointArtifacts, ENDPOINT_NAME, ENDPOINT_KEY_REGEX),
+              ),
+            });
+
+  publish-release:
+    name: Publish release
+    runs-on:
+      - ubuntu-latest
+    needs:
+      - populate-matrix
+    permissions:
+      id-token: write
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.populate-matrix.outputs.matrix) }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::442277771319:role/PQTunnelArtifactReadOnly
+          aws-region: ap-northeast-1
+
+      - name: Download artifact
+        run: |
+          echo "⬇️ Downloading ${{ matrix.name }}"
+          aws s3api get-object --bucket aorta-chelpis --key ${{ matrix.key }} ${{ matrix.name }}
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ github.event.inputs.version }}
+          tag_name: ${{ github.event.inputs.version }}
+          files: ${{ matrix.name }}
+          append_body: true
+
+      - name: Post Download artifact
+        uses: actions/github-script@v6
+        with:
+          script: |
+            await io.rmRF('${{ matrix.name }}');
