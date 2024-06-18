@@ -36,8 +36,9 @@ jobs:
       - name: List artifacts
         id: list-artifacts
         run: |
-          app_artifacts=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-app-installer/pq-tunnel-installer-${{github.event.inputs.app-version}} | jq -c)
+          app_artifacts=$(aws s3api list-objects --bucket pqtunnel --prefix release/pqtunnel-app/v${{github.event.inputs.app-version}}/ | jq -c)
           echo "app-artifacts=${app_artifacts}" >> "$GITHUB_OUTPUT"
+
           endpoint_artifacts=$(aws s3api list-objects --bucket aorta-chelpis --prefix build/aorta-endpoint-installer/pqtunnel-endpoint-v${{github.event.inputs.endpoint-version}} | jq -c)
           echo "endpoint-artifacts=${endpoint_artifacts}" >> "$GITHUB_OUTPUT"
 
@@ -46,30 +47,27 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            const APP_NAME = "pqtunnel-app";
-            const APP_KEY_REGEX = /^build\/aorta-app-installer\/pq-tunnel-installer-(.*)$/;
-            const ENDPOINT_NAME = "pqtunnel-endpoint";
-            const ENDPOINT_KEY_REGEX =
-              /^build\/aorta-endpoint-installer\/pqtunnel-endpoint-v(.*)$/;
-            const appArtifacts = ${{ steps.list-artifacts.outputs.app-artifacts }};
-            const endpointArtifacts = ${{ steps.list-artifacts.outputs.endpoint-artifacts }};
-            const processArtifact = (artifacts, prefix, regex) =>
-              artifacts.Contents.flatMap(({ Key }) => {
-                const match = regex.exec(Key);
+            const path = require("path");
+
+            const appArtifacts = (${{ steps.list-artifacts.outputs.app-artifacts }})
+              .Contents.map(({Key}) => ({ bucket: "pqtunnel", name: path.basename(Key), key: Key }));
+            const endpointArtifacts = (${{ steps.list-artifacts.outputs.endpoint-artifacts }})
+              .Contents.flatMap(({ Key }) => {
+                const match = /^build\/aorta-endpoint-installer\/pqtunnel-endpoint-v(.*)$/.exec(Key);
                 if (match && match[1] && !match[1].includes("-dev-") && !match[1].includes("-alpha-") && !match[1].includes("-beta-")) {
                   return [
                     {
-                      name: `${prefix}-${match[1]}`,
+                      bucket: "aorta-chelpis",
+                      name: `pqtunnel-endpoint-${match[1]}`,
                       key: Key,
                     },
                   ];
                 }
                 return [];
               });
+
             core.setOutput("matrix", {
-              include: processArtifact(appArtifacts, APP_NAME, APP_KEY_REGEX).concat(
-                processArtifact(endpointArtifacts, ENDPOINT_NAME, ENDPOINT_KEY_REGEX),
-              ),
+              include: appArtifacts.concat(endpointArtifacts),
             });
 
   publish-release:
@@ -94,7 +92,7 @@ jobs:
       - name: Download artifact
         run: |
           echo "⬇️ Downloading ${{ matrix.name }}"
-          aws s3api get-object --bucket aorta-chelpis --key ${{ matrix.key }} ${{ matrix.name }}
+          aws s3api get-object --bucket ${{ matrix.bucket }} --key ${{ matrix.key }} ${{ matrix.name }}
 
       - name: Upload Release
         uses: softprops/action-gh-release@v1
